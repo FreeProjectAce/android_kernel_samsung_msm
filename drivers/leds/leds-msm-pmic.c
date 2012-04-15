@@ -146,7 +146,6 @@ static int __devexit msm_pmic_led_remove(struct platform_device *pdev)
 static int msm_pmic_led_suspend(struct platform_device *dev,
 		pm_message_t state)
 {
-	msm_keypad_bl_led_set(&msm_kp_bl_led, LED_OFF);
 	led_classdev_suspend(&msm_kp_bl_led);
 
 	return 0;
@@ -155,7 +154,7 @@ static int msm_pmic_led_suspend(struct platform_device *dev,
 static int msm_pmic_led_resume(struct platform_device *dev)
 {
 	led_classdev_resume(&msm_kp_bl_led);
-	msm_keypad_bl_led_set(&msm_kp_bl_led, LED_FULL);
+
 	return 0;
 }
 #else
