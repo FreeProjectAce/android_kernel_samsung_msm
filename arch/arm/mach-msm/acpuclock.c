@@ -104,6 +104,7 @@ static remote_spinlock_t pll_lock;
 static struct shared_pll_control *pll_control;
 static struct clock_state drv_state = { 0 };
 static struct clkctl_acpu_speed *acpu_freq_tbl;
+static struct clkctl_acpu_speed current_clock;
 
 static void __init acpuclk_init(void);
 
@@ -231,12 +232,15 @@ static struct clkctl_acpu_speed pll0_960_pll1_196_pll2_1200[] = {
 static struct clkctl_acpu_speed pll0_960_pll1_245_pll2_800[] = {
 	{ 0, 19200, ACPU_PLL_TCXO, 0, 0, 19200, 0, 0, 30720 },
 	{ 0, 120000, ACPU_PLL_0, 4, 7,  60000, 1, 3,  61440 },
-	{ 1, 122880, ACPU_PLL_1, 1, 1,  61440, 1, 3,  61440 },
-	{ 0, 200000, ACPU_PLL_2, 2, 3,  66667, 2, 4,  61440 },
-	{ 1, 245760, ACPU_PLL_1, 1, 0, 122880, 1, 4,  61440 },
-	{ 1, 320000, ACPU_PLL_0, 4, 2, 160000, 1, 5, 122880 },
+	{ 1, 122880, ACPU_PLL_1, 1, 1,  61440, 1, 1,  61440 },
+	{ 0, 200000, ACPU_PLL_2, 2, 3,  66667, 2, 2,  61440 },
+	{ 1, 245760, ACPU_PLL_1, 1, 0, 122880, 1, 3,  61440 },
+	{ 1, 320000, ACPU_PLL_0, 4, 2, 160000, 1, 4, 122880 },
 	{ 0, 400000, ACPU_PLL_2, 2, 1, 133333, 2, 5, 122880 },
-	{ 1, 480000, ACPU_PLL_0, 4, 1, 160000, 2, 6, 122880 },
+	{ 1, 480000, ACPU_PLL_0, 4, 1, 160000, 2, 5, 122880 },
+	{ 1, 614400, ACPU_PLL_2, 2, 0, 153600, 3, 6, 122880 },
+	{ 1, 672000, ACPU_PLL_2, 2, 0, 168000, 3, 6, 122880 },
+	{ 1, 729600, ACPU_PLL_2, 2, 0, 182400, 3, 7, 122880 },
 	{ 1, 800000, ACPU_PLL_2, 2, 0, 200000, 3, 7, 122880 },
 	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0}, {0, 0, 0} }
 };
@@ -604,6 +608,7 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 	if (strt_s->axiclk_khz != tgt_s->axiclk_khz) {
 		res = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK,
 						tgt_s->axiclk_khz * 1000);
+		int retries = 10;
 		if (res < 0)
 			pr_warning("Setting AXI min rate failed (%d)\n", res);
 	}
@@ -630,6 +635,7 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 	/* Drop VDD level if we can. */
 	if (tgt_s->vdd < strt_s->vdd) {
 		res = acpuclk_set_vdd_level(tgt_s->vdd);
+		int retries = 10;
 		if (res < 0)
 			pr_warning("Unable to drop ACPU vdd (%d)\n", res);
 	}
