@@ -202,13 +202,13 @@ static void process_key_event(uint8_t tsk_msg)
 		if(st_new > st_old)
 		{
 			// press event
-			printk("[TSP] press keycode: %4d, keypress: %4d\n", keycode, 1);
+//			printk("[TSP] press keycode: %4d, keypress: %4d\n", keycode, 1);
 			input_report_key(ts_global->input_dev, keycode, 1);
 		}
 		else if(st_old > st_new)
 		{
 			// release event
-			printk("[TSP] release keycode: %4d, keypress: %4d\n", keycode, 0);
+//			printk("[TSP] release keycode: %4d, keypress: %4d\n", keycode, 0);
 			input_report_key(ts_global->input_dev, keycode, 0);
 		}
 	}
