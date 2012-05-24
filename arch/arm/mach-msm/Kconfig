@@ -196,6 +196,12 @@ config 800MHZ
 	default y
 	help
 	  Support for the only cooper board.
+
+config MSM_CPU_FREQ_OVERCLOCK_800
+	bool "overclock 800Mhz cpu"
+	default n
+	help
+	  Overclock CPU and GPU 
 	  
 config MACH_TROUT
 	depends on ARCH_MSM7X01A
