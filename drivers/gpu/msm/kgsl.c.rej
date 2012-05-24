@@ -1,0 +1,286 @@
+--- drivers/gpu/msm/kgsl.c	2011-04-03 15:40:08.000000000 +0700
++++ drivers/gpu/msm/kgsl.c	2011-12-23 19:21:50.000000000 +0700
+@@ -276,68 +354,6 @@
+ 	return timestamp_cmp(ts_processed, timestamp);
+ }
+ 
+-/*** QCOM DEBUG CODE ***/
+-extern int ringbuffer_protected_mode_flag;
+-struct kgsl_functable stored_ftbl;
+-
+-void kgsl_print_ftbl(struct kgsl_functable *ftbl)
+-{
+-    KGSL_DRV_ERR("device_regread = 0x%p\n", ftbl->device_regread);
+-    KGSL_DRV_ERR("device_setstate = 0x%p\n", ftbl->device_setstate);
+-    KGSL_DRV_ERR("device_idle = 0x%p\n", ftbl->device_idle);
+-    KGSL_DRV_ERR("device_isidle = 0x%p\n", ftbl->device_isidle);
+-    KGSL_DRV_ERR("device_suspend_context = 0x%p\n", ftbl->device_suspend_context);
+-    KGSL_DRV_ERR("device_resume_context = 0x%p\n", ftbl->device_resume_context);
+-    KGSL_DRV_ERR("device_start = 0x%p\n", ftbl->device_start);
+-    KGSL_DRV_ERR("device_stop = 0x%p\n", ftbl->device_stop);
+-    KGSL_DRV_ERR("device_getproperty = 0x%p\n", ftbl->device_getproperty);
+-    KGSL_DRV_ERR("device_waittimestamp = 0x%p\n", ftbl->device_waittimestamp);
+-    KGSL_DRV_ERR("device_cmdstream_readtimestamp = 0x%p\n", ftbl->device_cmdstream_readtimestamp);
+-    KGSL_DRV_ERR("device_issueibcmds = 0x%p\n", ftbl->device_issueibcmds);
+-    KGSL_DRV_ERR("device_drawctx_create = 0x%p\n", ftbl->device_drawctxt_create);
+-    KGSL_DRV_ERR("device_drawctx_destroy = 0x%p\n", ftbl->device_drawctxt_destroy);
+-    KGSL_DRV_ERR("device_ioctl = 0x%p\n", ftbl->device_ioctl);
+-    KGSL_DRV_ERR("device_setup_pt = 0x%p\n", ftbl->device_setup_pt);
+-    KGSL_DRV_ERR("device_cleanup_pt = 0x%p\n", ftbl->device_cleanup_pt);
+-}
+-/*** QCOM DEBUG CODE ***/
+-
+-int kgsl_regread(struct kgsl_device *device, unsigned int offsetwords,
+-			unsigned int *value)
+-{
+-	int status = -ENXIO;
+-
+-    /*** QCOM DEBUG CODE ***/
+-    if (ringbuffer_protected_mode_flag)
+-    {
+-        if (memcmp(&stored_ftbl, &device->ftbl, sizeof(struct kgsl_functable)));
+-        {
+-            KGSL_DRV_ERR("function table corruption\n");
+-            //kgsl_print_ftbl(&device->ftbl);
+-            //kgsl_print_ftbl(&stored_ftbl);
+-        }
+-		ringbuffer_protected_mode_flag = 0;
+-    }
+-    /*** QCOM DEBUG CODE ***/
+-
+-	if (device->ftbl.device_regread)
+-		status = device->ftbl.device_regread(device, offsetwords,
+-					value);
+-
+-	return status;
+-}
+-
+-int kgsl_regwrite(struct kgsl_device *device, unsigned int offsetwords,
+-			unsigned int value)
+-{
+-	int status = -ENXIO;
+-	if (device->ftbl.device_regwrite)
+-		status = device->ftbl.device_regwrite(device, offsetwords,
+-					value);
+-
+-	return status;
+-}
+-
+ int kgsl_setstate(struct kgsl_device *device, uint32_t flags)
+ {
+ 	int status = -ENXIO;
+@@ -563,7 +648,7 @@
+ 
+ 	mutex_lock(&kgsl_driver.process_mutex);
+ 	list_for_each_entry(private, &kgsl_driver.process_list, list) {
+-		if (private->pid == task_pid_nr(current)) {
++		if (private->pid == task_tgid_nr(current)) {
+ 			private->refcnt++;
+ 			goto out;
+ 		}
+@@ -572,38 +657,39 @@
+ 	/* no existing process private found for this dev_priv, create one */
+ 	private = kzalloc(sizeof(struct kgsl_process_private), GFP_KERNEL);
+ 	if (private == NULL) {
+-		KGSL_DRV_ERR("Error: cannot allocate process private data\n");
++		KGSL_DRV_ERR(cur_dev_priv->device, "kzalloc(%d) failed\n",
++			sizeof(struct kgsl_process_private));
+ 		goto out;
+ 	}
+ 
+ 	spin_lock_init(&private->mem_lock);
+ 	private->refcnt = 1;
+-	private->pid = task_pid_nr(current);
++	private->pid = task_tgid_nr(current);
+ 
+ 	INIT_LIST_HEAD(&private->mem_list);
+ 
+ #ifdef CONFIG_MSM_KGSL_MMU
+ 	{
+-		struct kgsl_device *device;
+ 		unsigned long pt_name;
+ 
+ #ifdef CONFIG_KGSL_PER_PROCESS_PAGE_TABLE
+-		pt_name = task_pid_nr(current);
++		pt_name = task_tgid_nr(current);
+ #else
+ 		pt_name = KGSL_MMU_GLOBAL_PT;
+ #endif
+-		device = kgsl_get_device(KGSL_DEVICE_YAMATO);
+-		private->pagetable = kgsl_mmu_getpagetable(&device->mmu,
+-							   pt_name);
++		private->pagetable = kgsl_mmu_getpagetable(pt_name);
+ 		if (private->pagetable == NULL) {
+-			KGSL_DRV_ERR("Error: Unable to get the page table\n");
+ 			kfree(private);
+ 			private = NULL;
++			goto out;
+ 		}
+ 	}
+ #endif
+ 
+ 	list_add(&private->list, &kgsl_driver.process_list);
++
++	kgsl_process_init_sysfs(private);
++
+ out:
+ 	mutex_unlock(&kgsl_driver.process_mutex);
+ 	return private;
+@@ -616,19 +702,27 @@
+ 	struct kgsl_mem_entry *entry = NULL;
+ 	struct kgsl_mem_entry *entry_tmp = NULL;
+ 
++	if (!private)
++		return;
++
+ 	mutex_lock(&kgsl_driver.process_mutex);
+ 
+ 	if (--private->refcnt)
+ 		goto unlock;
+ 
++	KGSL_MEM_INFO(device,
++			"Memory usage: vmalloc (%d/%d) exmem (%d/%d)\n",
++			private->stats.vmalloc, private->stats.vmalloc_max,
++			private->stats.exmem, private->stats.exmem_max);
++
++	kgsl_process_uninit_sysfs(private);
++
+ 	list_del(&private->list);
+ 
+-	spin_lock(&private->mem_lock);
+ 	list_for_each_entry_safe(entry, entry_tmp, &private->mem_list, list) {
+ 		list_del(&entry->list);
+ 		kgsl_destroy_mem_entry(entry);
+ 	}
+-	spin_unlock(&private->mem_lock);
+ 
+ #ifdef CONFIG_MSM_KGSL_MMU
+ 	if (private->pagetable != NULL)
+@@ -889,68 +988,89 @@
+ 
+ /*call all ioctl sub functions with driver locked*/
+ static long kgsl_ioctl_device_getproperty(struct kgsl_device_private *dev_priv,
+-					 void __user *arg)
++					  unsigned int cmd, void *data)
+ {
+ 	int result = 0;
+-	struct kgsl_device_getproperty param;
++	struct kgsl_device_getproperty *param = data;
+ 
+-	if (copy_from_user(&param, arg, sizeof(param))) {
+-		result = -EFAULT;
+-		goto done;
++	switch (param->type) {
++	case KGSL_PROP_VERSION:
++	{
++		struct kgsl_version version;
++		if (param->sizebytes != sizeof(version)) {
++			result = -EINVAL;
++			break;
++		}
++
++		version.drv_major = KGSL_VERSION_MAJOR;
++		version.drv_minor = KGSL_VERSION_MINOR;
++		version.dev_major = dev_priv->device->ver_major;
++		version.dev_minor = dev_priv->device->ver_minor;
++
++		if (copy_to_user(param->value, &version, sizeof(version)))
++			result = -EFAULT;
++
++		break;
+ 	}
+-	result = dev_priv->device->ftbl.device_getproperty(dev_priv->device,
+-					 param.type,
+-					 param.value, param.sizebytes);
+-done:
++	default:
++		result = dev_priv->device->ftbl.device_getproperty(
++					dev_priv->device, param->type,
++					param->value, param->sizebytes);
++	}
++
++
+ 	return result;
+ }
+ 
+ static long kgsl_ioctl_device_regread(struct kgsl_device_private *dev_priv,
+-				     void __user *arg)
++				      unsigned int cmd, void *data)
+ {
+-	int result = 0;
+-	struct kgsl_device_regread param;
++	struct kgsl_device_regread *param = data;
+ 
+-	if (copy_from_user(&param, arg, sizeof(param))) {
+-		result = -EFAULT;
+-		goto done;
++	if (param->offsetwords*sizeof(uint32_t) >=
++	    dev_priv->device->regspace.sizebytes) {
++		KGSL_DRV_ERR(dev_priv->device, "invalid offset %d\n",
++			     param->offsetwords);
++		return -ERANGE;
+ 	}
+-	result = dev_priv->device->ftbl.device_regread(dev_priv->device,
+-						param.offsetwords,
+-						&param.value);
+ 
+-	if (result != 0)
+-		goto done;
++	kgsl_regread(dev_priv->device, param->offsetwords, &param->value);
+ 
+-	if (copy_to_user(arg, &param, sizeof(param))) {
+-		result = -EFAULT;
+-		goto done;
+-	}
+-done:
+-	return result;
++	return 0;
+ }
+ 
+ 
+ static long kgsl_ioctl_device_waittimestamp(struct kgsl_device_private
+-						*dev_priv, void __user *arg)
++						*dev_priv, unsigned int cmd,
++						void *data)
+ {
+ 	int result = 0;
+-	struct kgsl_device_waittimestamp param;
++	struct kgsl_device_waittimestamp *param = data;
+ 
+-	if (copy_from_user(&param, arg, sizeof(param))) {
+-		result = -EFAULT;
+-		goto done;
+-	}
++	/* Set the active count so that suspend doesn't do the
++	   wrong thing */
++
++	dev_priv->device->active_cnt++;
+ 
+ 	/* Don't wait forever, set a max value for now */
+-	if (param.timeout == -1)
+-		param.timeout = 10 * MSEC_PER_SEC;
++	if (param->timeout == -1)
++		param->timeout = 10 * MSEC_PER_SEC;
++
+ 	result = dev_priv->device->ftbl.device_waittimestamp(dev_priv->device,
+-				     param.timestamp,
+-				     param.timeout);
++					param->timestamp,
++					param->timeout);
++
++	/* order reads to the buffer written to by the GPU */
++	rmb();
++
++	kgsl_memqueue_drain(dev_priv->device);
++
++	/* Fire off any pending suspend operations that are in flight */
++
++	INIT_COMPLETION(dev_priv->device->suspend_gate);
++	dev_priv->device->active_cnt--;
++	complete(&dev_priv->device->suspend_gate);
+ 
+-	kgsl_runpending(dev_priv->device);
+-done:
+ 	return result;
+ }
+ static bool check_ibdesc(struct kgsl_device_private *dev_priv,

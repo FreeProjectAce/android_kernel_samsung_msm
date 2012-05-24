@@ -1,0 +1,80 @@
+--- drivers/gpu/msm/kgsl_pwrctrl.c	2011-04-03 14:17:49.000000000 +0700
++++ drivers/gpu/msm/kgsl_pwrctrl.c	2011-12-23 19:21:50.000000000 +0700
+@@ -793,46 +1256,63 @@
+ 	}
+ 
+ 	device->requested_state = KGSL_STATE_NONE;
+-	return KGSL_FAILURE;
++	return -EBUSY;
+ 
+ sleep:
+ 	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_IRQ_OFF);
+ 	kgsl_pwrctrl_axi(device, KGSL_PWRFLAGS_AXI_OFF);
++	if (pwr->pwrlevels[0].gpu_freq > 0)
++		clk_set_rate(pwr->grp_clks[0],
++				pwr->pwrlevels[pwr->num_pwrlevels - 1].
++				gpu_freq);
++	kgsl_pwrctrl_busy_time(device, false);
++	pwr->busy.start.tv_sec = 0;
++	device->pwrctrl.no_switch_cnt = 0;
++	device->pwrctrl.time = 0;
++	kgsl_pwrctrl_tz_reset();
++	goto clk_off;
+ 
+ nap:
++	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_IRQ_OFF);
++clk_off:
+ 	kgsl_pwrctrl_clk(device, KGSL_PWRFLAGS_CLK_OFF);
+ 
+ 	device->state = device->requested_state;
+ 	device->requested_state = KGSL_STATE_NONE;
+ 	wake_unlock(&device->idle_wakelock);
++	KGSL_PWR_WARN(device, "state -> NAP/SLEEP(%d), device %d\n",
++				  device->state, device->id);
+ 
+-	return KGSL_SUCCESS;
++	return 0;
+ }
+ 
+ 
+ /******************************************************************/
+ /* Caller must hold the device mutex. */
+-int kgsl_pwrctrl_wake(struct kgsl_device *device)
++void kgsl_pwrctrl_wake(struct kgsl_device *device)
+ {
+-	int status = KGSL_SUCCESS;
+-
+ 	if (device->state == KGSL_STATE_SUSPEND)
+-		return status;
++		return;
+ 
+-	/* Turn on the core clocks */
+-	status = kgsl_pwrctrl_clk(device, KGSL_PWRFLAGS_CLK_ON);
+ 	if (device->state != KGSL_STATE_NAP) {
++		if (device->pwrctrl.idle_pass)
++			kgsl_pwrctrl_pwrlevel_change(device,
++					device->pwrctrl.thermal_pwrlevel);
+ 		kgsl_pwrctrl_axi(device, KGSL_PWRFLAGS_AXI_ON);
+-		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_IRQ_ON);
+ 	}
++	/* Turn on the core clocks */
++	kgsl_pwrctrl_clk(device, KGSL_PWRFLAGS_CLK_ON);
+ 
+-	/* Re-enable HW access */
++	/* Enable state before turning on irq */
+ 	device->state = KGSL_STATE_ACTIVE;
+-	mod_timer(&device->idle_timer, jiffies + FIRST_TIMEOUT);
++	KGSL_PWR_WARN(device, "state -> ACTIVE, device %d\n", device->id);
++	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_IRQ_ON);
+ 
+-	KGSL_DRV_VDBG("<-- kgsl_yamato_wake(). Return value %d\n", status);
+-	wake_lock(&device->idle_wakelock);
++	/* Re-enable HW access */
++	mod_timer(&device->idle_timer,
++				jiffies + device->pwrctrl.interval_timeout);
+ 
+-	return status;
++	wake_lock(&device->idle_wakelock);
++	KGSL_PWR_INFO(device, "wake return for device %d\n", device->id);
+ }
+ 
