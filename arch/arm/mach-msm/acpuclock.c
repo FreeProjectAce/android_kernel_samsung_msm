@@ -458,7 +458,14 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
 		reg_clksel |= (hunt_s->ahbclk_div << 1);
 		writel(reg_clksel, A11S_CLK_SEL_ADDR);
 	}
-
+#ifdef CONFIG_MSM_CPU_FREQ_OVERCLOCK_800
+	// Perform overclocking if requested
+	if(hunt_s->a11clk_khz>787200) {
+		// Change the speed of PLL2
+		writel(hunt_s->a11clk_khz/19200, PLLn_L_VAL(2));
+		udelay(50);
+	}
+#endif
 	/* Program clock source and divider */
 	reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 	reg_clkctl &= ~(0xFF << (8 * src_sel));
@@ -470,6 +477,14 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
 	reg_clksel ^= 1;
 	writel(reg_clksel, A11S_CLK_SEL_ADDR);
 
+#ifdef CONFIG_MSM_CPU_FREQ_OVERCLOCK_800
+	// Recover from overclocking
+	if(hunt_s->a11clk_khz<=787200) {
+		// Restore the speed of PLL2
+		writel(PLL_800_MHZ, PLLn_L_VAL(2));
+		udelay(50);
+	}
+#endif
 	/*
 	 * If the new clock divider is lower than the previous, then
 	 * program the divider after switching the clock

@@ -2149,13 +2149,9 @@ static void __init msm7x2x_init_irq(void)
 
 static struct msm_acpu_clock_platform_data msm7x2x_clock_data = {
 	.acpu_switch_time_us = 50,
-#ifdef CONFIG_800MHZ
 	.max_speed_delta_khz = 400000,
-#else
-	.max_speed_delta_khz = 256000,
-#endif
 	.vdd_switch_time_us = 62,
-	.max_axi_khz = 160000,
+	.max_axi_khz = 422400,
 };
 
 void msm_serial_debug_init(unsigned int base, int irq,
